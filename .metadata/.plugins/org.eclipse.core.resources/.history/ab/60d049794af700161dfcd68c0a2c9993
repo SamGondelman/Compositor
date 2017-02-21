@@ -1,0 +1,147 @@
+import java.awt.Graphics2D;
+import java.awt.Image;
+import java.awt.geom.AffineTransform;
+import java.awt.image.BufferedImage;
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.net.URL;
+import java.util.logging.Level;
+
+import javax.imageio.ImageIO;
+
+import org.apache.commons.logging.LogFactory;
+import org.apache.http.HttpResponse;
+import org.apache.http.client.ClientProtocolException;
+import org.apache.http.client.HttpClient;
+import org.apache.http.client.methods.HttpPost;
+import org.apache.http.entity.mime.MultipartEntity;
+import org.apache.http.entity.mime.content.FileBody;
+import org.apache.http.impl.client.DefaultHttpClient;
+
+import com.gargoylesoftware.htmlunit.BrowserVersion;
+import com.gargoylesoftware.htmlunit.WebClient;
+import com.gargoylesoftware.htmlunit.html.HtmlPage;
+
+public class Compositor {
+	
+	public static void main(String[] args) {
+	    final WebClient webClient = new WebClient(BrowserVersion.BEST_SUPPORTED);
+	    webClient.getOptions().setThrowExceptionOnScriptError(false);
+	    webClient.getOptions().setThrowExceptionOnFailingStatusCode(false);
+	    webClient.getOptions().setPrintContentOnFailingStatusCode(false);
+	    webClient.getOptions().setCssEnabled(false);
+	    
+	    LogFactory.getFactory().setAttribute("org.apache.commons.logging.Log", "org.apache.commons.logging.impl.NoOpLog");
+	    java.util.logging.Logger.getLogger("com.gargoylesoftware.htmlunit").setLevel(Level.OFF);
+	    java.util.logging.Logger.getLogger("org.apache.commons.httpclient").setLevel(Level.OFF);
+	    
+	    String input = "watermelon.jpg";
+	    String output = "test.png";
+	    
+		int div = 10;
+		
+		boolean random = false;
+		boolean debug = false;
+	    
+	    // I am the laziest person imaginable, so here is one try-catch and that's it
+	    try {
+	    	File f = new File(input);
+			BufferedImage img = ImageIO.read(f);
+	    	BufferedImage dest = new BufferedImage(img.getWidth(), img.getHeight(), BufferedImage.TYPE_INT_ARGB);
+			Graphics2D g = dest.createGraphics();
+
+		    File tempFile = new File("temp.png");
+		    
+		    if (random) {
+		    	for (int i = 0; i < div*div; i++) {
+		    		System.out.println((((float) i) / ((float) div)) * 100.0 + "%");
+		    		int x = (int) (Math.random()*img.getWidth());
+		    		int y = (int) (Math.random()*img.getHeight());
+		    		processArea(x, y, w, h, img, tempFile, debug, webClient);
+		    	}
+		    } else {
+		    	for (int x = 0; x <= img.getWidth() - w; x += w) {
+		    		System.out.println((((float) d) / ((float) div)) * 100.0 + "%");
+		    		for (int y = 0; y <= img.getHeight() - h; y += h) {
+		    			processArea(x, y, w, h, img, tempFile, debug, webClient);
+		    		}
+		    		d++;
+		    	}
+		    }
+	    	tempFile.delete();
+	    	
+			// Write to output file
+		    File outputfile = new File(output);
+		    ImageIO.write(dest, "png", outputfile);
+			g.dispose();
+	    } catch (Exception e) {
+			e.printStackTrace();
+		}
+	    
+	    System.out.println("Done.");
+	    webClient.close();
+	}
+	
+	public static void processArea(int x, int y, int w, int h, BufferedImage img, File tempFile, boolean debug, WebClient webClient) {
+		BufferedImage temp = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
+	    ImageIO.write(img.getSubimage(x, y, w, h), "png", tempFile);
+    	String imageURL = getGoogleURL(tempFile.getAbsolutePath());
+		if (debug) System.out.println(imageURL);
+		
+		// Find visually similar image links
+		final HtmlPage results = webClient.getPage(imageURL);
+		String textResults = results.asText(); 
+		String[] split = textResults.substring(textResults.indexOf("Visually similar images") + "Visually similar images".length() + 2).split("}");
+		
+		int i = 0;
+		// Google always displays 10 images from the search page
+		while (i < 10) {
+			// Nested try-catches?  ok
+			try {
+				int ou = split[i].indexOf("\"ou\"")+6;
+				String splitURL = split[i].substring(ou, split[i].indexOf("\"", ou));
+				System.out.println(splitURL);
+				
+				URL simImg = new URL(splitURL);
+				temp = ImageIO.read(simImg);
+				
+				if (temp != null) {
+					break;
+				} else {
+					if (debug) System.out.println("Couldn't find image on page.");
+					i++;
+				}
+			} catch (Exception e) {
+				if (debug) System.out.println("Couldn't open image.");
+				i++;
+			}
+		}
+		
+		Image sImg = temp.getScaledInstance(w, h, Image.SCALE_SMOOTH);
+		g.drawImage(sImg, x, y, null);
+	}
+	
+	@SuppressWarnings("deprecation")
+	public static String getGoogleURL(String imageFile) throws ClientProtocolException, IOException {
+    	// Retrieve Google's reverse image lookup URL
+		HttpClient client = new DefaultHttpClient();
+		String url = "https://www.google.co.in/searchbyimage/upload";
+		HttpPost post = new HttpPost(url);			
+		MultipartEntity entity = new MultipartEntity();
+		entity.addPart("encoded_image", new FileBody(new File(imageFile)));			
+		post.setEntity(entity);
+		HttpResponse response = client.execute(post);
+		BufferedReader rd = new BufferedReader(new InputStreamReader(response.getEntity().getContent()));
+		StringBuilder sb = new StringBuilder();
+		String line = "";
+		while ((line = rd.readLine()) != null) {
+			if (line.indexOf("HREF")>0) {
+				sb.append(line);
+			}
+		}
+		String imageURL = sb.toString().split("\"")[1];
+		return imageURL;
+	}
+}
